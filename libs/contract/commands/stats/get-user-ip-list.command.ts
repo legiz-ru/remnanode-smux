@@ -15,8 +15,9 @@ export namespace GetUserIpListCommand {
             ips: z.array(
                 z.object({
                     ip: z.string(),
-                    lastSeen: z.iso
-                        .datetime({ local: true, offset: true })
+                    lastSeen: z
+                        .string()
+                        .datetime({ local: true, offset: true, message: 'Invalid date format' })
                         .transform((str) => new Date(str)),
                 }),
             ),

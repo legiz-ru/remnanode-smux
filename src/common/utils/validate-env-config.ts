@@ -1,12 +1,12 @@
 import { z, ZodError } from 'zod';
 
-export function validateEnvConfig<T>(schema: z.ZodType<T>, config: Record<string, unknown>): T {
+export function validateEnvConfig<T>(schema: z.ZodType, config: Record<string, unknown>): T {
     try {
         return schema.parse(config);
     } catch (e) {
         if (e instanceof ZodError) {
-            const formattedErrors = e.issues
-                .map((issue) => `❌ ${issue.path.join('.')}: ${issue.message}`)
+            const formattedErrors = e.errors
+                .map((err) => `❌ ${err.path.join('.')}: ${err.message}`)
                 .join('\n');
 
             const errorMessage = `

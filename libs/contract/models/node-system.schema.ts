@@ -10,7 +10,7 @@ export const NetworkInterfaceSchema = z.object({
 
 export const NodeSystemInfoSchema = z.object({
     arch: z.string(),
-    cpus: z.int(),
+    cpus: z.number().int(),
     cpuModel: z.string(),
     memoryTotal: z.number(),
     hostname: z.string(),

@@ -9,7 +9,7 @@ export namespace RemoveUsersCommand {
         users: z.array(
             z.object({
                 userId: z.string(),
-                hashUuid: z.uuid(),
+                hashUuid: z.string().uuid(),
             }),
         ),
     });

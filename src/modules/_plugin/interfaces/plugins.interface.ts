@@ -3,5 +3,4 @@ export interface IPlugins {
     egressFilter: boolean;
     torrentBlocker: boolean;
     connectionDrop: boolean;
-    preStart: boolean;
 }

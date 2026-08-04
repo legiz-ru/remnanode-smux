@@ -24,9 +24,8 @@ export const configSchema = z
                 const parsed = parseNodePayloadFromConfigService(data.SECRET_KEY);
                 data.JWT_PUBLIC_KEY = parsed.jwtPublicKey;
             } catch {
-                ctx.issues.push({
-                    code: 'custom',
-                    input: data.SECRET_KEY,
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
                     message: 'Invalid SECRET_KEY payload',
                 });
             }

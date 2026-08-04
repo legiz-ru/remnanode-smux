@@ -12,7 +12,8 @@ export namespace GetUsersIpListCommand {
                     ips: z.array(
                         z.object({
                             ip: z.string(),
-                            lastSeen: z.iso
+                            lastSeen: z
+                                .string()
                                 .datetime({
                                     local: true,
                                     offset: true,
