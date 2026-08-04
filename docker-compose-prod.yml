@@ -1,6 +1,6 @@
 services:
   remnanode:
-    image: remnawave/node:latest
+    image: ghcr.io/legiz-ru/remnanode-smux:latest
     container_name: remnanode
     hostname: remnanode
     network_mode: host
