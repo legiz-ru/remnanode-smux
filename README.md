@@ -1,6 +1,6 @@
 ## Remnanode smux
 
-Fork of [Remnawave Node](https://github.com/remnawave/node) `2.8.0`, built with the
+Fork of [Remnawave Node](https://github.com/remnawave/node) `3.0.0`, built with the
 [Jolymmiles/Xray-core](https://github.com/Jolymmiles/Xray-core) fork (smux support) instead of the
 upstream XTLS core.
 
@@ -33,7 +33,7 @@ See [docker-compose-prod.yml](./docker-compose-prod.yml) for the full example.
 
 | | |
 |---|---|
-| Node | `2.8.0` (`version` in `package.json`) |
+| Node | `3.0.0` (`version` in `package.json`) |
 | Xray core | `v26.7.29` from `Jolymmiles/Xray-core` (`XRAY_CORE_VERSION` / `UPSTREAM_REPO` in [Dockerfile](./Dockerfile)) |
 
 ### Releasing
@@ -41,7 +41,7 @@ See [docker-compose-prod.yml](./docker-compose-prod.yml) for the full example.
 Publishing is driven entirely by GitHub Releases:
 
 1. Bump `version` in `package.json` (and `XRAY_CORE_VERSION` / `UPSTREAM_REPO` in `Dockerfile` when the core changes).
-2. Create a release on GitHub with the tag of that version (e.g. `2.8.0`) and keep **Set as the latest release** checked.
+2. Create a release on GitHub with the tag of that version (e.g. `3.0.0`) and keep **Set as the latest release** checked.
 3. [`.github/workflows/release.yml`](./.github/workflows/release.yml) then:
     - builds `linux/amd64` and `linux/arm64` on native runners and pushes them as a single manifest to
       `ghcr.io/legiz-ru/remnanode-smux:<tag>` (plus `:latest` for non-prereleases);

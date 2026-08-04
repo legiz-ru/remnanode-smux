@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing release tag to (re)build, e.g. 2.8.0'
+        description: 'Existing release tag to (re)build, e.g. 3.0.0'
         required: true
         type: string
 
