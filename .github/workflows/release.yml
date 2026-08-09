@@ -1,0 +1,249 @@
+name: Build & Publish Docker Image
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to (re)build, e.g. 3.1.0'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  prepare:
+    name: Prepare release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      image: ${{ steps.meta.outputs.image }}
+      node_version: ${{ steps.meta.outputs.node_version }}
+      core_version: ${{ steps.meta.outputs.core_version }}
+      core_repo: ${{ steps.meta.outputs.core_repo }}
+      core_url: ${{ steps.meta.outputs.core_url }}
+      is_latest: ${{ steps.meta.outputs.is_latest }}
+    steps:
+      - name: Checkout released code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
+
+      - name: Collect metadata
+        id: meta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+
+          IMAGE="${REGISTRY}/$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          NODE_VERSION="$(jq -r .version package.json)"
+          CORE_VERSION="$(sed -n 's/^ARG XRAY_CORE_VERSION=//p' Dockerfile | head -n 1)"
+          CORE_REPO="$(sed -n 's/^ARG UPSTREAM_REPO=//p' Dockerfile | head -n 1)"
+          CORE_URL="https://github.com/${CORE_REPO}/Xray-core/releases/tag/${CORE_VERSION}"
+
+          if [ "${{ github.event_name }}" = "release" ]; then
+            PRERELEASE="${{ github.event.release.prerelease }}"
+          else
+            PRERELEASE="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json isPrerelease -q .isPrerelease)"
+          fi
+
+          if [ "${PRERELEASE}" = "false" ]; then
+            IS_LATEST="true"
+          else
+            IS_LATEST="false"
+          fi
+
+          {
+            echo "tag=${TAG}"
+            echo "image=${IMAGE}"
+            echo "node_version=${NODE_VERSION}"
+            echo "core_version=${CORE_VERSION}"
+            echo "core_repo=${CORE_REPO}"
+            echo "core_url=${CORE_URL}"
+            echo "is_latest=${IS_LATEST}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        run: |
+          echo "Tag:          ${{ steps.meta.outputs.tag }}"
+          echo "Image:        ${{ steps.meta.outputs.image }}"
+          echo "Node version: ${{ steps.meta.outputs.node_version }}"
+          echo "Xray core:    ${{ steps.meta.outputs.core_version }} (${{ steps.meta.outputs.core_repo }})"
+          echo "Tag latest:   ${{ steps.meta.outputs.is_latest }}"
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: [prepare]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Prepare platform pair
+        run: |
+          platform=${{ matrix.platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
+
+      - name: Checkout released code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            XRAY_CORE_VERSION=${{ needs.prepare.outputs.core_version }}
+            UPSTREAM_REPO=${{ needs.prepare.outputs.core_repo }}
+          provenance: false
+          outputs: type=image,name=${{ needs.prepare.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Merge & push manifest
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create & push manifest list
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          IS_LATEST: ${{ needs.prepare.outputs.is_latest }}
+        run: |
+          set -euo pipefail
+
+          TAGS="-t ${IMAGE}:${TAG}"
+
+          # a "v"-prefixed release tag also publishes the bare version tag
+          if [ "${TAG#v}" != "${TAG}" ]; then
+            TAGS="${TAGS} -t ${IMAGE}:${TAG#v}"
+          fi
+
+          if [ "${IS_LATEST}" = "true" ]; then
+            TAGS="${TAGS} -t ${IMAGE}:latest"
+          fi
+
+          # shellcheck disable=SC2086
+          docker buildx imagetools create ${TAGS} \
+            $(printf "${IMAGE}@sha256:%s " *)
+
+      - name: Inspect image
+        run: docker buildx imagetools inspect ${{ needs.prepare.outputs.image }}:${{ needs.prepare.outputs.tag }}
+
+  update-release:
+    name: Update release notes
+    needs: [prepare, merge]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Append build info to release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          NODE_VERSION: ${{ needs.prepare.outputs.node_version }}
+          CORE_VERSION: ${{ needs.prepare.outputs.core_version }}
+          CORE_REPO: ${{ needs.prepare.outputs.core_repo }}
+          CORE_URL: ${{ needs.prepare.outputs.core_url }}
+          IS_LATEST: ${{ needs.prepare.outputs.is_latest }}
+        run: |
+          set -euo pipefail
+
+          MARKER='<!-- build-info -->'
+
+          gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json body -q .body > body.md || : > body.md
+
+          # drop a previously appended block, so re-runs do not stack up
+          sed -i "/${MARKER}/,\$d" body.md
+
+          {
+            cat body.md
+            echo
+            echo "${MARKER}"
+            echo
+            echo "### 📦 Build info"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Node version | \`${NODE_VERSION}\` |"
+            echo "| Xray core | [\`${CORE_VERSION}\`](${CORE_URL}) (\`${CORE_REPO}/Xray-core\`) |"
+            echo "| Platforms | \`linux/amd64\`, \`linux/arm64\` |"
+            echo
+            echo "### 🐳 Docker image"
+            echo
+            echo '```bash'
+            echo "docker pull ${IMAGE}:${TAG}"
+            if [ "${IS_LATEST}" = "true" ]; then
+              echo "docker pull ${IMAGE}:latest"
+            fi
+            echo '```'
+          } > notes.md
+
+          gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --notes-file notes.md
+
+      - name: Job summary
+        run: |
+          {
+            echo "### Published"
+            echo
+            echo "- Image: \`${{ needs.prepare.outputs.image }}:${{ needs.prepare.outputs.tag }}\`"
+            echo "- Node version: \`${{ needs.prepare.outputs.node_version }}\`"
+            echo "- Xray core: [${{ needs.prepare.outputs.core_version }}](${{ needs.prepare.outputs.core_url }})"
+          } >> "$GITHUB_STEP_SUMMARY"
