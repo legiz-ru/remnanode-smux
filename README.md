@@ -34,7 +34,7 @@ See [docker-compose-prod.yml](./docker-compose-prod.yml) for the full example.
 | | |
 |---|---|
 | Node | `3.1.0` (`version` in `package.json`) |
-| Xray core | `v26.7.29` from `Jolymmiles/Xray-core` (`XRAY_CORE_VERSION` / `UPSTREAM_REPO` in [Dockerfile](./Dockerfile)) |
+| Xray core | `v26.8.10` from `Jolymmiles/Xray-core` (`XRAY_CORE_VERSION` / `UPSTREAM_REPO` in [Dockerfile](./Dockerfile)) |
 
 ### Bundled core vs. the runtime core loader
 
