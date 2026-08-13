@@ -17,8 +17,8 @@ RUN npm run build \
 
 FROM alpine:3.21 AS xray
 
-ARG XRAY_CORE_VERSION=v26.7.28
-ARG UPSTREAM_REPO=XTLS
+ARG XRAY_CORE_VERSION=v26.8.18
+ARG UPSTREAM_REPO=Jolymmiles
 ARG XRAY_CORE_INSTALL_SCRIPT=https://raw.githubusercontent.com/remnawave/scripts/main/scripts/install-xray.sh
 ARG ASN_LMDB_URL=https://github.com/remnawave/asn-index/releases/latest/download/asn-prefixes-lmdb.tar.gz
 
@@ -34,11 +34,11 @@ FROM node:24.19-trixie-slim
 
 ARG S6_OVERLAY_VERSION=3.2.3.0
 
-LABEL org.opencontainers.image.title="Remnawave Node"
-LABEL org.opencontainers.image.description="Remnawave Node with built-in XRay Core"
-LABEL org.opencontainers.image.url="https://github.com/remnawave/node"
-LABEL org.opencontainers.image.source="https://github.com/remnawave/node"
-LABEL org.opencontainers.image.vendor="Remnawave"
+LABEL org.opencontainers.image.title="Remnawave Node (smux)"
+LABEL org.opencontainers.image.description="Remnawave Node with built-in Xray Core (Jolymmiles fork, smux support)"
+LABEL org.opencontainers.image.url="https://github.com/legiz-ru/remnanode-smux"
+LABEL org.opencontainers.image.source="https://github.com/legiz-ru/remnanode-smux"
+LABEL org.opencontainers.image.vendor="legiz-ru"
 LABEL org.opencontainers.image.licenses="AGPL-3.0"
 LABEL org.opencontainers.image.documentation="https://docs.rw"
 
