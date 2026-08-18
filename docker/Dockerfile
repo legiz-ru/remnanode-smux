@@ -32,7 +32,7 @@ RUN apk add --no-cache curl \
 
 FROM alpine:3.21 AS geocheck
 
-ARG GEOCHECK_VERSION=0.2.0
+ARG GEOCHECK_VERSION=0.2.4
 ARG GEOCHECK_RELEASE_URL=https://github.com/remnawave/geocheck/releases/download
 ARG TARGETARCH
 
