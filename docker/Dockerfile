@@ -17,7 +17,7 @@ RUN npm run build \
 
 FROM alpine:3.21 AS xray
 
-ARG XRAY_CORE_VERSION=v26.8.23
+ARG XRAY_CORE_VERSION=v26.8.24
 ARG UPSTREAM_REPO=Jolymmiles
 ARG XRAY_CORE_INSTALL_SCRIPT=https://raw.githubusercontent.com/remnawave/scripts/main/scripts/install-xray.sh
 ARG ASN_LMDB_URL=https://github.com/remnawave/asn-index/releases/latest/download/asn-prefixes-lmdb.tar.gz
