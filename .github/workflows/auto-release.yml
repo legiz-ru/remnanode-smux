@@ -1,0 +1,258 @@
+name: Auto Release
+
+on:
+  schedule:
+    - cron: '0 */3 * * *'
+  workflow_dispatch:
+    inputs:
+      node_ref:
+        description: 'remnawave/node ref to build (default: latest release tag)'
+        required: false
+        type: string
+      core_version:
+        description: 'Xray-core tag from Jolymmiles/Xray-core (default: latest release)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/legiz-ru/remnanode-smux
+  UPSTREAM_NODE_REPO: remnawave/node
+  UPSTREAM_CORE_REPO: Jolymmiles/Xray-core
+
+jobs:
+  resolve:
+    name: Resolve versions
+    runs-on: ubuntu-latest
+    outputs:
+      node_tag: ${{ steps.versions.outputs.node_tag }}
+      core_version: ${{ steps.versions.outputs.core_version }}
+      image_tag: ${{ steps.versions.outputs.image_tag }}
+      should_build: ${{ steps.check.outputs.should_build }}
+    steps:
+      - name: Resolve latest upstream versions
+        id: versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_REF_INPUT: ${{ inputs.node_ref }}
+          CORE_VERSION_INPUT: ${{ inputs.core_version }}
+        run: |
+          set -euo pipefail
+
+          NODE_TAG="${NODE_REF_INPUT:-}"
+          if [ -z "${NODE_TAG}" ]; then
+            NODE_TAG="$(gh api "repos/${UPSTREAM_NODE_REPO}/releases/latest" -q .tag_name)"
+          fi
+
+          CORE_VERSION="${CORE_VERSION_INPUT:-}"
+          if [ -z "${CORE_VERSION}" ]; then
+            CORE_VERSION="$(gh api "repos/${UPSTREAM_CORE_REPO}/releases/latest" -q .tag_name)"
+          fi
+
+          IMAGE_TAG="v${NODE_TAG#v}-${CORE_VERSION#v}"
+
+          {
+            echo "node_tag=${NODE_TAG}"
+            echo "core_version=${CORE_VERSION}"
+            echo "image_tag=${IMAGE_TAG}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check whether this combination is already published
+        id: check
+        run: |
+          set -euo pipefail
+          TAG="${{ env.IMAGE }}:${{ steps.versions.outputs.image_tag }}"
+          if docker buildx imagetools inspect "${TAG}" >/dev/null 2>&1; then
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify Xray-core release assets are live
+        if: steps.check.outputs.should_build == 'true'
+        run: |
+          set -euo pipefail
+          CORE_VERSION="${{ steps.versions.outputs.core_version }}"
+          for ASSET in Xray-linux-64.zip Xray-linux-arm64-v8a.zip; do
+            URL="https://github.com/${UPSTREAM_CORE_REPO}/releases/download/${CORE_VERSION}/${ASSET}"
+            CODE="$(curl -sIL -o /dev/null -w '%{http_code}' "${URL}")"
+            if [ "${CODE}" != "200" ]; then
+              echo "::error::${ASSET} is not available for ${CORE_VERSION} (HTTP ${CODE}). The upstream fork release may not have finished publishing, or the tag was replaced."
+              exit 1
+            fi
+          done
+
+      - name: Summary
+        run: |
+          {
+            echo "### Auto Release"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Node tag | \`${{ steps.versions.outputs.node_tag }}\` |"
+            echo "| Xray core | \`${{ steps.versions.outputs.core_version }}\` |"
+            echo "| Image tag | \`${{ steps.versions.outputs.image_tag }}\` |"
+            echo "| Already published | \`${{ steps.check.outputs.should_build == 'true' && 'no, building' || 'yes, skipping' }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: [resolve]
+    if: needs.resolve.outputs.should_build == 'true'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Prepare platform pair
+        run: |
+          platform=${{ matrix.platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
+
+      - name: Checkout remnawave/node at ${{ needs.resolve.outputs.node_tag }}
+        uses: actions/checkout@v4
+        with:
+          repository: remnawave/node
+          ref: ${{ needs.resolve.outputs.node_tag }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            XRAY_CORE_VERSION=${{ needs.resolve.outputs.core_version }}
+            UPSTREAM_REPO=Jolymmiles
+          labels: |
+            org.opencontainers.image.title=Remnawave Node (smux)
+            org.opencontainers.image.description=Remnawave Node with built-in Xray Core (Jolymmiles fork, smux support)
+            org.opencontainers.image.url=https://github.com/legiz-ru/remnanode-smux
+            org.opencontainers.image.source=https://github.com/legiz-ru/remnanode-smux
+            org.opencontainers.image.vendor=legiz-ru
+            org.opencontainers.image.licenses=AGPL-3.0
+            org.opencontainers.image.version=${{ needs.resolve.outputs.image_tag }}
+          provenance: false
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Merge & push manifest
+    needs: [resolve, build]
+    if: needs.resolve.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create & push manifest list
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          IMAGE_TAG: ${{ needs.resolve.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2046,SC2086
+          docker buildx imagetools create \
+            -t ${{ env.IMAGE }}:${IMAGE_TAG} \
+            -t ${{ env.IMAGE }}:latest \
+            $(printf "${{ env.IMAGE }}@sha256:%s " *)
+
+      - name: Inspect image
+        run: docker buildx imagetools inspect ${{ env.IMAGE }}:${{ needs.resolve.outputs.image_tag }}
+
+  publish-release-notes:
+    name: Publish release notes
+    needs: [resolve, merge]
+    if: needs.resolve.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_TAG: ${{ needs.resolve.outputs.node_tag }}
+          CORE_VERSION: ${{ needs.resolve.outputs.core_version }}
+          IMAGE_TAG: ${{ needs.resolve.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+
+          NODE_URL="https://github.com/${UPSTREAM_NODE_REPO}/releases/tag/${NODE_TAG}"
+          CORE_URL="https://github.com/${UPSTREAM_CORE_REPO}/releases/tag/${CORE_VERSION}"
+
+          {
+            echo "Automated build — no source is modified, only build-args select the Xray core."
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Node | [\`${NODE_TAG}\`](${NODE_URL}) |"
+            echo "| Xray core | [\`${CORE_VERSION}\`](${CORE_URL}) (\`Jolymmiles/Xray-core\`) |"
+            echo "| Platforms | \`linux/amd64\`, \`linux/arm64\` |"
+            echo
+            echo "### Docker image"
+            echo
+            echo '```bash'
+            echo "docker pull ${{ env.IMAGE }}:${IMAGE_TAG}"
+            echo "docker pull ${{ env.IMAGE }}:latest"
+            echo '```'
+          } > notes.md
+
+          gh release create "${IMAGE_TAG}" \
+            --repo "${{ github.repository }}" \
+            --title "${IMAGE_TAG}" \
+            --notes-file notes.md
